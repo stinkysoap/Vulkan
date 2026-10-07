@@ -88,6 +88,11 @@ class Application {
   bool createSyncResources();
   bool createCommandBuffers();
   void render();
+  static VKAPI_ATTR VkBool32 VKAPI_CALL
+  debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
+                VkDebugUtilsMessageTypeFlagsEXT messageType,
+                const VkDebugUtilsMessengerCallbackDataEXT *pcallbackDData,
+                void *pUserData);
 
 public:
   bool initialize();

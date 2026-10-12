@@ -1,6 +1,9 @@
 #include "application.h"
 #include <SDL3/SDL.h>
+#include <SDL3/SDL_init.h>
+#include <SDL3/SDL_video.h>
 #include <SDL3/SDL_vulkan.h>
+#include <cstddef>
 #include <cstdint>
 #include <iostream>
 #include <vector>
@@ -29,7 +32,27 @@ void Application::run() {
     render();
   }
 }
-void Application::shutdown() { return; }
+
+bool Application::createSurface() {
+  if (!SDL_Vulkan_CreateSurface(window, vulkanInstance, nullptr, &surface)) {
+    return false;
+  }
+  return true;
+}
+
+void Application::shutdown() {
+  // there is more stuff
+  if (vulkanInstance) {
+    vkDestroyInstance(vulkanInstance, nullptr);
+  }
+
+  volkFinalize();
+
+  if (window) {
+    SDL_DestroyWindow(window);
+  }
+  SDL_Quit();
+}
 
 bool Application::initialize() {
   if (SDL_InitSubSystem(SDL_INIT_VIDEO)) {
@@ -54,7 +77,44 @@ bool Application::initializeVulkan() {
   if (!createVulkanInstance()) {
     showError("Couldnt Create A Vulkan Instance ");
   }
+  if (!createSurface()) {
+    showError("Couldnt Create a window surface ");
+    return false;
+  }
+  if (physicalDevice = findPhysicalDevice(); !physicalDevice) {
+    showError("Unable to find an appropriate physical Device");
+  }
+  if (!findGraphicsQueue()) {
+    showError("Unable to find a compatible graphics queue ");
+    return false;
+  }
+  if (!createDevice(physicalDevice)) {
+    showError("Couldnt Create the logical GPU Device");
+    return false;
+  }
   return true;
+}
+
+VkPhysicalDevice Application::findPhysicalDevice() {
+  uint32_t physDeviceCount = 0;
+  vkEnumeratePhysicalDevices(vulkanInstance, &physDeviceCount, nullptr);
+  std::vector<VkPhysicalDevice> physicalDevices(physDeviceCount);
+  vkEnumeratePhysicalDevices(vulkanInstance, &physDeviceCount,
+                             physicalDevices.data());
+  VkPhysicalDevice physicalDevice = nullptr;
+  if (physDeviceCount) {
+    physicalDevice = physicalDevices[0];
+    for (auto &pdev : physicalDevices) {
+
+      VkPhysicalDeviceProperties props{};
+      vkGetPhysicalDeviceProperties(pdev, &props);
+      if (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
+        physicalDevice = pdev;
+        break;
+      }
+    }
+  }
+  return physicalDevice;
 }
 
 bool Application::createVulkanInstance() {
@@ -90,6 +150,21 @@ bool Application::createVulkanInstance() {
                      VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT,
       .pfnUserCallback = debugCallback};
 
+  VkInstanceCreateInfo instCreateInfo{
+      .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
+      .pNext = &debugInfo,
+      .pApplicationInfo = &appInfo,
+      .enabledLayerCount = static_cast<uint32_t>(requestedLayers.size()),
+      .ppEnabledLayerNames = requestedLayers.data(),
+      .enabledExtensionCount =
+          static_cast<uint32_t>(requestedExtensions.size()),
+      .ppEnabledExtensionNames = requestedExtensions.data()};
+  if (vkCreateInstance(&instCreateInfo, nullptr, &vulkanInstance) !=
+      VK_SUCCESS) {
+    return false;
+  }
+  volkLoadInstance(vulkanInstance);
+
   return true;
 }
 
@@ -106,6 +181,32 @@ VKAPI_ATTR VkBool32 VKAPI_CALL Application::debugCallback(
 
 void Application::showError(const std::string &errorMessasge) const {
   std::cerr << "[Error]: " << errorMessasge << std::endl;
+}
+
+bool Application::findGraphicsQueue() {
+  uint32_t queueFamCount = 0;
+
+  vkGetPhysicalDeviceQueueFamilyProperties2(physicalDevice, &queueFamCount,
+                                            nullptr);
+  std::vector<VkQueueFamilyProperties2> queueFamProps(
+      queueFamCount, {.sType = VK_STRUCTURE_TYPE_QUEUE_FAMILY_PROPERTIES_2});
+  vkGetPhysicalDeviceQueueFamilyProperties2(physicalDevice, &queueFamCount,
+                                            queueFamProps.data());
+  for (int currentFamIdx = 0; currentFamIdx < queueFamProps.size();
+       currentFamIdx++) {
+    /// check if it has Presentation support
+    VkBool32 hasPresentSupport = VK_FALSE;
+    vkGetPhysicalDeviceSurfaceSupportKHR(physicalDevice, currentFamIdx, surface,
+                                         &hasPresentSupport);
+    const auto &props = queueFamProps[currentFamIdx];
+    // ensure this is a Graphics queue with Presentation support
+    if (props.queueFamilyProperties.queueFlags & VK_QUEUE_GRAPHICS_BIT &&
+        hasPresentSupport) {
+      gfxQueueFamIdx = currentFamIdx;
+      return true;
+    }
+  }
+  return false;
 }
 
 void Application::render() { return; }
